@@ -6,35 +6,9 @@ El proyecto prioriza cuatro propiedades: **grounding en fuentes oficiales**, **t
 
 ## Arquitectura propuesta
 
-El flujo de consulta separa explícitamente clasificación, recuperación y evaluación de evidencia:
+![Arquitectura Aula-SAMA](docs/diagrams/aula-sama-architecture.svg)
 
-```mermaid
-flowchart LR
-    U[Usuario / canal] --> IN[Intake]
-    IN --> CL{Clasificar alcance<br/>y urgencia}
-
-    CL -->|Emergencia / operacional| ES[Escalamiento seguro]
-    CL -->|Fuera de alcance| ES
-    CL -->|Educativo, en alcance| QR[Normalizar / reescribir consulta]
-
-    QR --> HY[Retrieval híbrido<br/>Dense + Sparse en Qdrant]
-    HY --> RR[Rerank]
-    RR --> EV{Evidence gate}
-
-    EV -->|Suficiente| GEN[Generación grounded]
-    EV -->|Insuficiente y permitido| EXT[Buscar fuente oficial<br/>DAGRAN / SAMA]
-    EXT --> NORM[Normalizar evidencia externa]
-    NORM --> RR2[Rerank / validar]
-    RR2 --> EV2{Evidence gate}
-    EV2 -->|Suficiente| GEN
-    EV2 -->|Insuficiente| ES
-
-    GEN --> CIT[Citación verificable]
-    CIT --> OUT[Respuesta]
-    ES --> OUT
-```
-
-La arquitectura detallada, decisiones técnicas y criterios de evolución están en [`docs/1_architecture.md`](docs/1_architecture.md).
+La arquitectura detallada, decisiones técnicas y criterios de evolución están en [`docs/1_architecture.md`](docs/1_architecture.md). La fuente editable del diagrama está en [`docs/diagrams/aula-sama-architecture.mmd`](docs/diagrams/aula-sama-architecture.mmd).
 
 ## Stack recomendado
 
