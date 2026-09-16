@@ -1,0 +1,62 @@
+flowchart TD
+    U[Usuario / canal] --> IN[Intake]
+    IN --> CL{classify_request}
+
+    CL -->|Emergencia / operacional| ESC[escalate]
+    CL -->|Fuera de alcance| ESC
+    CL -->|Educativo en alcance| QR[normalize_query]
+
+    QR --> RET[retrieve_hybrid]
+    RET --> RR[rerank]
+    RR --> EG{assess_evidence}
+
+    EG -->|Suficiente| GA[generate_answer]
+    EG -->|Insuficiente + fallback permitido| EXT[search_official_sources]
+    EG -->|Insuficiente sin fallback| ESC
+
+    EXT --> NORM[normalize_external_evidence]
+    NORM --> RR2[rerank_external]
+    RR2 --> EG2{assess_evidence}
+    EG2 -->|Suficiente| GA
+    EG2 -->|Insuficiente| ESC
+
+    GA --> CIT[attach_citations]
+    CIT --> RESP[Respuesta]
+    ESC --> RESP
+
+    subgraph DATA[Persistencia y trazabilidad]
+        Q[(Qdrant
+chunks + dense/sparse)]
+        PG[(PostgreSQL
+source registry + audit + state)]
+        OS[(Object storage
+originales + normalizados)]
+    end
+
+    subgraph ING[Ingesta documental]
+        SRC[Fuentes oficiales
+PDF / web / imagen / video]
+        REG[source_registry]
+        PARSE[Parse / OCR / visión / transcripción]
+        CH[Chunking estructural + metadata]
+        EMB[Dense embedding + sparse representation]
+        SRC --> REG --> PARSE --> CH --> EMB
+    end
+
+    RET -. consulta .-> Q
+    IN -. state/audit .-> PG
+    CIT -. provenance .-> PG
+    REG -. registry .-> PG
+    SRC -. snapshot .-> OS
+    PARSE -. normalizado .-> OS
+    EMB --> Q
+
+    subgraph OP[Futuro plano operacional — separado del RAG]
+        SENS[Sensores / APIs / estaciones]
+        TS[(Time-series / geospatial DB)]
+        RULES[Reglas / modelos / incident state]
+        NOTIF[Motor de alertas / notificaciones]
+        SENS --> TS --> RULES --> NOTIF
+    end
+
+    RULES -. tool read-only .-> EXT
