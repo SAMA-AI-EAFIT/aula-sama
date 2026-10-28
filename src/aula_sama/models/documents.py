@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Literal
 
-SourceType = Literal["pdf", "youtube", "web", "text"]
+SourceType = Literal["pdf", "youtube", "audio", "web", "text"]
 Authority = Literal["oficial", "academica", "otra"]
 Hazard = Literal["inundacion", "movimiento_en_masa", "avenida_torrencial", "general"]
 
@@ -44,7 +44,14 @@ class ParsedDocument:
     uri: str = ""
 
     @property
+    def is_timed(self) -> bool:
+        """Transcripciones (video/audio): los segmentos tienen timestamps en lugar de páginas."""
+        return bool(self.segments) and self.segments[0].start is not None
+
+    @property
     def markdown(self) -> str:
+        if self.is_timed:
+            return "\n\n".join(f"[{_fmt_time(s.start)}] {s.text}" for s in self.segments)
         return "\n\n".join(s.text for s in self.segments)
 
 

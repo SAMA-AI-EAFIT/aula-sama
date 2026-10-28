@@ -28,6 +28,18 @@ class Settings(BaseSettings):
     embedding_model: str = "voyage-4"
     sparse_model: str = "Qdrant/bm25"
 
+    openai_api_key: str = ""
+    transcription_model: str = "gpt-transcribe"
+    # Términos que el modelo de transcripción debe reconocer literalmente
+    transcription_keywords: list[str] = [
+        "Antioquia", "Valle de Aburrá", "DAGRAN", "SIATA", "UNGRD", "IDEAM", "SAMA", "Corantioquia",
+        "Área Metropolitana", "avenida torrencial", "movimiento en masa", "río Medellín",
+    ]
+
+    # OCR para PDFs escaneados: usa Tesseract si está instalado (mejor en español), si no RapidOCR
+    ocr_language: str = "spa"
+    ocr_dpi: int = 300
+
     chunk_target_tokens: int = 650
     chunk_overlap_tokens: int = 80
 

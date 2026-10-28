@@ -12,7 +12,7 @@ from aula_sama import registry
 from aula_sama.config import get_settings
 from aula_sama.ingestion import pipeline
 from aula_sama.ingestion.indexer import Indexer
-from aula_sama.ingestion.parsers import ParseError
+from aula_sama.ingestion.parsers import AUDIO_VIDEO_SUFFIXES, ParseError
 from aula_sama.ingestion.storage import get_storage
 from aula_sama.models import SourceMetadata
 
@@ -97,7 +97,12 @@ def show_result(label: str, run) -> None:
 
 
 def tab_upload() -> None:
-    files = st.file_uploader("PDF, Markdown o texto", type=["pdf", "md", "txt"], accept_multiple_files=True)
+    files = st.file_uploader(
+        "PDF, Markdown, texto, audio o video",
+        type=["pdf", "md", "txt", *(s.lstrip(".") for s in AUDIO_VIDEO_SUFFIXES)],
+        accept_multiple_files=True,
+        help="Los PDF escaneados pasan por OCR. El audio y el video se transcriben con OpenAI (~USD 0,27/hora).",
+    )
     meta, source_id = metadata_form("up", title_required=False)
     if len(files or []) > 1 and (meta.title or source_id):
         st.info("Con varios archivos, el título y el ID se derivan de cada nombre de archivo.")
@@ -113,7 +118,7 @@ def tab_links() -> None:
     urls = st.text_area(
         "URLs (una por línea)",
         placeholder="https://www.youtube.com/watch?v=…\nhttps://www.dagran.gov.co/…",
-        help="YouTube: se descarga la transcripción con timestamps (español primero). Otras URLs: se extrae el contenido principal de la página o el PDF enlazado.",
+        help="YouTube: se usan los subtítulos (español primero); si no tiene, se transcribe el audio con OpenAI. Otras URLs: se extrae el contenido principal de la página o el PDF enlazado.",
     )
     meta, source_id = metadata_form("url", title_required=False)
     lines = [u.strip() for u in urls.splitlines() if u.strip()]
@@ -185,7 +190,7 @@ def tab_search() -> None:
     for p in points:
         pl = p.payload or {}
         link = pl.get("uri", "")
-        if pl.get("source_type") == "youtube" and pl.get("start") is not None:
+        if pl.get("source_type") == "youtube" and pl.get("start") is not None:  # enlace al minuto exacto
             link = f"{link}&t={int(pl['start'])}s"
         with st.expander(f"{p.score:.3f} · {pl.get('title')} · {pl.get('locator', '')} · `{pl.get('chunk_id')}`"):
             if pl.get("heading_path"):

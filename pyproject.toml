@@ -17,6 +17,10 @@ dependencies = [
     "trafilatura>=1.12",
     "streamlit>=1.40",
     "boto3>=1.35",
+    "openai>=3.40.0",
+    "yt-dlp[default]>=2026.10.26",
+    "rapidocr>=3.10.0",
+    "deno>=2.9.8",
 ]
 
 [dependency-groups]

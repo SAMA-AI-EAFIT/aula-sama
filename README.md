@@ -54,7 +54,11 @@ La arquitectura detallada, decisiones técnicas y criterios de evolución están
 
 ## Desarrollo
 
-Requisitos: [uv](https://docs.astral.sh/uv/) y Docker.
+Requisitos: [uv](https://docs.astral.sh/uv/), Docker, `ffmpeg` y Tesseract con español (OCR de PDFs escaneados):
+
+```bash
+sudo apt install ffmpeg tesseract-ocr tesseract-ocr-spa
+```
 
 ```bash
 uv sync                      # crea .venv con Python 3.12 y las versiones fijadas en uv.lock
@@ -81,7 +85,7 @@ El código se sincroniza con git; **los datos no**. Con `docker compose` cada eq
 
 ### Pipeline de ingesta
 
-`src/aula_sama/ingestion/`: registro de fuente → snapshot del original → parse (PDF con `pymupdf4llm`, YouTube con `youtube-transcript-api`, web con `trafilatura`) → chunking estructural (~650 tokens, respetando encabezados y conservando página o timestamps) → embeddings Voyage (`input_type="document"`) + BM25 sparse (`fastembed`) → upsert en Qdrant con IDs deterministas. Reingestar un original idéntico no hace nada; uno modificado crea una versión nueva y reemplaza sus chunks.
+`src/aula_sama/ingestion/`: registro de fuente → snapshot del original → parse (PDF con `pymupdf4llm` y OCR automático en páginas sin texto; YouTube con sus subtítulos o, si no tiene, audio vía `yt-dlp` transcrito con OpenAI `gpt-transcribe` en ventanas cortadas en silencios para conservar timestamps; archivos de audio/video igual; web con `trafilatura`) → chunking estructural (~650 tokens, respetando encabezados y conservando página o timestamps) → embeddings Voyage (`input_type="document"`) + BM25 sparse (`fastembed`) → upsert en Qdrant con IDs deterministas. Reingestar un original idéntico no hace nada; uno modificado crea una versión nueva y reemplaza sus chunks.
 
 ## Estado
 

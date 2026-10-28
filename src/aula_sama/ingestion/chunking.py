@@ -32,7 +32,7 @@ def chunk_document(
 ) -> list[Chunk]:
     target = target_tokens * CHARS_PER_TOKEN
     overlap = overlap_tokens * CHARS_PER_TOKEN
-    if doc.source_type == "youtube":
+    if doc.is_timed:
         blocks = [_Block(s.text, None, start=s.start, end=s.end) for s in doc.segments]
         groups = _pack(blocks, target, overlap, sep=" ")
     else:
@@ -47,7 +47,7 @@ def chunk_document(
                 source_id=source_id,
                 version=version,
                 index=i,
-                text=("\n\n" if doc.source_type != "youtube" else " ").join(b.text for b in group).strip(),
+                text=(" " if doc.is_timed else "\n\n").join(b.text for b in group).strip(),
                 heading_path=group[-1].headings,
                 page_start=min(pages) if pages else None,
                 page_end=max(pages) if pages else None,

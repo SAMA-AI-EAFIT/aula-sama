@@ -2,14 +2,18 @@
 
 import json
 import re
+import tempfile
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 
+from aula_sama.config import get_settings
+from aula_sama.ingestion import transcription
 from aula_sama.models import ParsedDocument, Segment
 
 TRANSCRIPT_LANGUAGES = ("es", "es-419", "es-CO", "es-ES", "en")
+AUDIO_VIDEO_SUFFIXES = (".mp3", ".m4a", ".wav", ".ogg", ".opus", ".mp4", ".webm", ".mov", ".mkv")
 _YT_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 
@@ -21,14 +25,18 @@ def parse_pdf(data: bytes) -> ParsedDocument:
     import pymupdf
     import pymupdf4llm
 
+    settings = get_settings()
     with pymupdf.open(stream=data, filetype="pdf") as doc:
-        pages = pymupdf4llm.to_markdown(doc, page_chunks=True)
+        # El OCR solo se aplica a las páginas (o regiones) sin texto extraíble
+        pages = pymupdf4llm.to_markdown(
+            doc, page_chunks=True, ocr_language=settings.ocr_language, ocr_dpi=settings.ocr_dpi
+        )
         title = (doc.metadata or {}).get("title", "")
     segments = [
         Segment(text=p["text"].strip(), page=p["metadata"]["page_number"]) for p in pages if p["text"].strip()
     ]
     if not segments:
-        raise ParseError("El PDF no tiene texto extraíble (¿es escaneado? requiere OCR).")
+        raise ParseError("No se pudo extraer texto del PDF, ni siquiera con OCR.")
     return ParsedDocument(source_type="pdf", segments=segments, title_hint=title)
 
 
@@ -61,30 +69,60 @@ def youtube_video_id(url: str) -> str:
     return candidate
 
 
-def fetch_youtube(url: str) -> tuple[ParsedDocument, bytes]:
-    """Descarga la transcripción con timestamps. Devuelve el documento y el JSON crudo para archivar."""
+def fetch_youtube(url: str, keywords: list[str] = ()) -> tuple[ParsedDocument, bytes]:
+    """Transcripción con timestamps: subtítulos de YouTube si existen, si no se transcribe el audio.
+
+    Devuelve el documento y el JSON crudo para archivar.
+    """
     from youtube_transcript_api import YouTubeTranscriptApi
     from youtube_transcript_api._errors import CouldNotRetrieveTranscript
 
     video_id = youtube_video_id(url)
+    canonical = f"https://www.youtube.com/watch?v={video_id}"
     try:
         fetched = YouTubeTranscriptApi().fetch(video_id, languages=TRANSCRIPT_LANGUAGES)
+        snippets = [s for s in fetched.snippets if s.text.strip()]
+        segments = [
+            Segment(text=" ".join(s.text.split()), start=s.start, end=s.start + s.duration) for s in snippets
+        ]
+        method = f"youtube-captions:{fetched.language_code}" + (":auto" if fetched.is_generated else "")
     except CouldNotRetrieveTranscript as exc:
-        raise ParseError(f"No hay transcripción disponible para {video_id}: {exc.__class__.__name__}") from exc
+        if not get_settings().openai_api_key:
+            raise ParseError(
+                f"{video_id} no tiene subtítulos ({exc.__class__.__name__}) y falta OPENAI_API_KEY para transcribirlo."
+            ) from exc
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                audio = transcription.download_audio(canonical, Path(tmp))
+                segments = transcription.transcribe_file(audio, keywords)
+            except transcription.TranscriptionError as err:
+                raise ParseError(str(err)) from err
+        method = f"openai:{get_settings().transcription_model}"
 
-    snippets = [s for s in fetched.snippets if s.text.strip()]
-    segments = [
-        Segment(text=" ".join(s.text.split()), start=s.start, end=s.start + s.duration) for s in snippets
-    ]
-    raw = {
-        "video_id": video_id,
-        "language": fetched.language_code,
-        "is_generated": fetched.is_generated,
-        "snippets": [{"text": s.text, "start": s.start, "duration": s.duration} for s in snippets],
-    }
-    canonical = f"https://www.youtube.com/watch?v={video_id}"
     doc = ParsedDocument(source_type="youtube", segments=segments, title_hint=_youtube_title(canonical), uri=canonical)
-    return doc, json.dumps(raw, ensure_ascii=False).encode()
+    return doc, _transcript_json(doc, method, video_id=video_id)
+
+
+def parse_audio_video(data: bytes, filename: str, keywords: list[str] = ()) -> tuple[ParsedDocument, bytes]:
+    """Transcribe un archivo de audio o video subido. El JSON de la transcripción también se archiva."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / f"media{Path(filename).suffix.lower()}"
+        path.write_bytes(data)
+        try:
+            segments = transcription.transcribe_file(path, keywords)
+        except transcription.TranscriptionError as exc:
+            raise ParseError(str(exc)) from exc
+    doc = ParsedDocument(source_type="audio", segments=segments, title_hint=Path(filename).stem)
+    return doc, _transcript_json(doc, f"openai:{get_settings().transcription_model}", filename=filename)
+
+
+def _transcript_json(doc: ParsedDocument, method: str, **extra) -> bytes:
+    raw = {
+        **extra,
+        "method": method,
+        "segments": [{"text": s.text, "start": s.start, "end": s.end} for s in doc.segments],
+    }
+    return json.dumps(raw, ensure_ascii=False).encode()
 
 
 def _youtube_title(url: str) -> str:
@@ -120,6 +158,7 @@ def fetch_web(url: str) -> tuple[ParsedDocument, bytes]:
 
 
 def parse_upload(data: bytes, filename: str) -> ParsedDocument:
+    """Documentos de texto (PDF/MD/TXT). Audio y video van por `parse_audio_video`."""
     suffix = Path(filename).suffix.lower()
     if suffix == ".pdf":
         return parse_pdf(data)

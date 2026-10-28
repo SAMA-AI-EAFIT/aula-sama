@@ -37,14 +37,25 @@ def slugify(text: str, max_len: int = 80) -> str:
 
 
 def ingest_upload(data: bytes, filename: str, meta: SourceMetadata, source_id: str | None = None) -> IngestResult:
-    doc = parsers.parse_upload(data, filename)
-    return _ingest(doc, data, Path(filename).suffix.lower() or ".bin", meta, source_id)
+    suffix = Path(filename).suffix.lower() or ".bin"
+    if suffix in parsers.AUDIO_VIDEO_SUFFIXES:
+        # Se archiva la transcripción, no el medio: los archivos de video pesan demasiado para el storage.
+        # El hash se calcula sobre el medio para que resubir el mismo archivo no lo vuelva a transcribir.
+        content_hash = hashlib.sha256(data).hexdigest()
+        if (cached := _unchanged(source_id or meta.title or Path(filename).stem, content_hash)) is not None:
+            return cached
+        doc, transcript = parsers.parse_audio_video(data, filename, meta.municipalities)
+        return _ingest(doc, transcript, ".transcript.json", meta, source_id, content_hash)
+    return _ingest(parsers.parse_upload(data, filename), data, suffix, meta, source_id)
 
 
 def ingest_youtube(url: str, meta: SourceMetadata, source_id: str | None = None) -> IngestResult:
-    doc, raw = parsers.fetch_youtube(url)
+    source_id = source_id or f"yt-{parsers.youtube_video_id(url)}"
+    if (cached := _unchanged(source_id)) is not None:
+        return cached  # evita volver a pagar la transcripción; para forzarla, eliminar la fuente
+    doc, raw = parsers.fetch_youtube(url, meta.municipalities)
     meta.title = meta.title or doc.title_hint
-    return _ingest(doc, raw, ".transcript.json", meta, source_id or f"yt-{parsers.youtube_video_id(url)}")
+    return _ingest(doc, raw, ".transcript.json", meta, source_id)
 
 
 def ingest_web(url: str, meta: SourceMetadata, source_id: str | None = None) -> IngestResult:
@@ -54,13 +65,28 @@ def ingest_web(url: str, meta: SourceMetadata, source_id: str | None = None) -> 
     return _ingest(doc, raw, suffix, meta, source_id)
 
 
+def _unchanged(source_id: str, content_hash: str | None = None) -> IngestResult | None:
+    """Resultado `unchanged` si la fuente ya está indexada (con ese hash, si se da)."""
+    with registry.session() as db:
+        source = registry.get_source(db, slugify(source_id))
+        latest = source.versions[-1] if source and source.versions else None
+        if latest and latest.status == "indexed" and content_hash in (None, latest.content_hash):
+            return IngestResult(source.source_id, latest.version, "unchanged", latest.n_chunks)
+    return None
+
+
 def _ingest(
-    doc: ParsedDocument, raw: bytes, suffix: str, meta: SourceMetadata, source_id: str | None
+    doc: ParsedDocument,
+    raw: bytes,
+    suffix: str,
+    meta: SourceMetadata,
+    source_id: str | None,
+    content_hash: str | None = None,
 ) -> IngestResult:
     settings = get_settings()
     meta.title = meta.title or doc.title_hint or "Sin título"
     source_id = slugify(source_id or meta.title)
-    content_hash = hashlib.sha256(raw).hexdigest()
+    content_hash = content_hash or hashlib.sha256(raw).hexdigest()
     storage = get_storage(settings)
     indexer = Indexer(settings)
 
