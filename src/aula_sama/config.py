@@ -36,6 +36,10 @@ class Settings(BaseSettings):
         "Área Metropolitana", "avenida torrencial", "movimiento en masa", "río Medellín",
     ]
 
+    # Imágenes (infografías) → Markdown con Claude
+    vision_model: str = "claude-opus-5-5"
+    vision_effort: str = "low"
+
     # Resolución a la que se renderizan las páginas escaneadas para el OCR
     ocr_dpi: int = 300
 

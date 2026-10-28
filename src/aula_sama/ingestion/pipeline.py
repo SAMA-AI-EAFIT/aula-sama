@@ -49,6 +49,40 @@ def ingest_upload(data: bytes, filename: str, meta: SourceMetadata, source_id: s
     return _ingest(parsers.parse_upload(data, filename), data, suffix, meta, source_id)
 
 
+def ingest_images(
+    images: list[tuple[str, bytes]], meta: SourceMetadata, source_id: str | None = None
+) -> IngestResult:
+    """Un conjunto de imágenes como una sola fuente (cada imagen es una página citable)."""
+    if not meta.title and not source_id:
+        raise ValueError("Un conjunto de imágenes necesita título o ID de fuente.")
+    content_hash = parsers.images_digest(images)
+    if (cached := _unchanged(source_id or meta.title, content_hash)) is not None:
+        return cached  # evita volver a pagar la conversión con Claude
+    doc = parsers.parse_images(images, context=meta.title)
+    return _ingest(doc, parsers.images_archive(images), ".images.zip", meta, source_id, content_hash)
+
+
+def ingest_zip(data: bytes, meta: SourceMetadata) -> tuple[list[IngestResult], list[str]]:
+    """Cada carpeta con imágenes dentro del zip se ingiere como una fuente aparte.
+
+    El título es la ruta completa de la carpeta: carpetas homónimas en zips distintos
+    (p. ej. "mov en masa" en banners y en el material base) no deben pisarse.
+    """
+    groups, skipped = parsers.read_zip_images(data)
+    titles = {f: " / ".join(p.strip().capitalize() for p in Path(f).parts if p != ".") or "Imágenes" for f in groups}
+    ids = [slugify(t) for t in titles.values()]
+    if len(set(ids)) != len(ids):
+        raise parsers.ParseError("Dos carpetas del zip producen el mismo ID de fuente; renombra una.")
+    results = []
+    for folder, images in groups.items():
+        m = SourceMetadata(**{**meta.__dict__, "title": titles[folder]})
+        try:
+            results.append(ingest_images(images, m))
+        except parsers.ParseError as exc:
+            results.append(IngestResult(slugify(m.title), 0, "failed", error=str(exc)))
+    return results, skipped
+
+
 def ingest_youtube(url: str, meta: SourceMetadata, source_id: str | None = None) -> IngestResult:
     source_id = source_id or f"yt-{parsers.youtube_video_id(url)}"
     if (cached := _unchanged(source_id)) is not None:

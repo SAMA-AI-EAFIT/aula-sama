@@ -22,6 +22,8 @@ dependencies = [
     "rapidocr>=3.10.0",
     "deno>=2.9.8",
     "imageio-ffmpeg>=0.7.0",
+    "anthropic>=2.3.0",
+    "pillow>=13.0.0",
 ]
 
 [dependency-groups]

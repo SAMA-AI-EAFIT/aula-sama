@@ -112,7 +112,7 @@ class Indexer:
                     "page_end": c.page_end,
                     "start": c.start,
                     "end": c.end,
-                    "locator": c.locator,
+                    "locator": c.locator.replace("p.", "img.") if source_type == "image" else c.locator,
                     "title": meta.title,
                     "publisher": meta.publisher,
                     "authority": meta.authority,

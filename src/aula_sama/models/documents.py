@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Literal
 
-SourceType = Literal["pdf", "youtube", "audio", "web", "text"]
+SourceType = Literal["pdf", "image", "youtube", "audio", "web", "text"]
 Authority = Literal["oficial", "academica", "otra"]
 Hazard = Literal["inundacion", "movimiento_en_masa", "avenida_torrencial", "general"]
 

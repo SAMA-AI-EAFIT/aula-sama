@@ -1,8 +1,11 @@
 """Conversión de originales a segmentos con ubicación (página o timestamps)."""
 
+import hashlib
 import json
 import re
 import tempfile
+import zipfile
+from collections import defaultdict
 from functools import cache
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -10,10 +13,12 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from aula_sama.config import get_settings
-from aula_sama.ingestion import transcription
+from aula_sama.ingestion import transcription, vision
 from aula_sama.models import ParsedDocument, Segment
 
 TRANSCRIPT_LANGUAGES = ("es", "es-419", "es-CO", "es-ES", "en")
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")
+MAX_ZIP_BYTES = 1_000_000_000  # tamaño descomprimido; protege contra zips malformados o "bombas"
 AUDIO_VIDEO_SUFFIXES = (".mp3", ".m4a", ".wav", ".ogg", ".opus", ".mp4", ".webm", ".mov", ".mkv")
 _YT_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
@@ -178,6 +183,80 @@ def fetch_web(url: str) -> tuple[ParsedDocument, bytes]:
         source_type="web", segments=[Segment(text=text)], title_hint=(meta.title if meta else "") or "", uri=str(r.url)
     )
     return doc, r.content
+
+
+def parse_images(images: list[tuple[str, bytes]], context: str = "") -> ParsedDocument:
+    """Un conjunto de imágenes (p. ej. una carpeta) → un documento; cada imagen es una "página"."""
+    try:
+        texts = vision.describe_images(images, context)
+    except vision.VisionError as exc:
+        raise ParseError(str(exc)) from exc
+    segments = [
+        Segment(text=f"{text}\n\n_Imagen: {Path(name).name}_", page=i)
+        for i, ((name, _), text) in enumerate(zip(images, texts, strict=True), start=1)
+    ]
+    return ParsedDocument(source_type="image", segments=segments)
+
+
+def images_digest(images: list[tuple[str, bytes]]) -> str:
+    """Hash estable del conjunto (nombres + contenido) para no reprocesar lo ya indexado."""
+    h = hashlib.sha256()
+    for name, data in images:
+        h.update(Path(name).name.encode() + b"\0" + hashlib.sha256(data).digest())
+    return h.hexdigest()
+
+
+def images_archive(images: list[tuple[str, bytes]]) -> bytes:
+    """Empaqueta las imágenes originales en un zip para archivarlas como un solo objeto."""
+    out = tempfile.SpooledTemporaryFile()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as zf:
+        for name, data in images:
+            zf.writestr(zipfile.ZipInfo(Path(name).name, date_time=(2000, 1, 1, 0, 0, 0)), data)
+    out.seek(0)
+    return out.read()
+
+
+def read_zip_images(data: bytes) -> tuple[dict[str, list[tuple[str, bytes]]], list[str]]:
+    """Imágenes de un zip agrupadas por carpeta, sin duplicados exactos.
+
+    Devuelve `{carpeta: [(ruta, bytes), ...]}` y la lista de archivos omitidos. Se lee en
+    memoria, sin extraer a disco, así que rutas como `../` no tienen efecto.
+    """
+    import io
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as exc:
+        raise ParseError("El archivo no es un zip válido.") from exc
+    entries = [i for i in zf.infolist() if not i.is_dir() and "__MACOSX" not in i.filename]
+    if sum(i.file_size for i in entries) > MAX_ZIP_BYTES:
+        raise ParseError("El zip descomprimido supera 1 GB.")
+
+    groups: dict[str, list[tuple[str, bytes]]] = defaultdict(list)
+    skipped, seen = [], set()
+    for info in sorted(entries, key=lambda i: i.filename):
+        name = _zip_name(info)
+        if Path(name).suffix.lower() not in IMAGE_SUFFIXES or Path(name).name.startswith("."):
+            skipped.append(name)
+            continue
+        content = zf.read(info)
+        digest = hashlib.sha256(content).digest()
+        if digest in seen:
+            skipped.append(f"{name} (duplicado)")
+            continue
+        seen.add(digest)
+        groups[str(Path(name).parent)].append((name, content))
+    return dict(groups), skipped
+
+
+def _zip_name(info: zipfile.ZipInfo) -> str:
+    # Zips creados en Windows/OneDrive sin la marca UTF-8 traen los nombres en cp437 mal decodificados
+    if info.flag_bits & 0x800:
+        return info.filename
+    try:
+        return info.filename.encode("cp437").decode("utf-8")
+    except UnicodeError:
+        return info.filename
 
 
 def parse_upload(data: bytes, filename: str) -> ParsedDocument:

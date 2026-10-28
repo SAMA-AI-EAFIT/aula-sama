@@ -35,6 +35,9 @@ def chunk_document(
     if doc.is_timed:
         blocks = [_Block(s.text, None, start=s.start, end=s.end) for s in doc.segments]
         groups = _pack(blocks, target, overlap, sep=" ")
+    elif doc.source_type == "image":
+        # Cada imagen es una unidad autocontenida: nunca se mezclan dos en un chunk
+        groups = [g for seg in doc.segments for g in _pack(_document_blocks([seg], target), target, overlap, "\n\n")]
     else:
         groups = _pack(_document_blocks(doc.segments, target), target, overlap, sep="\n\n")
 

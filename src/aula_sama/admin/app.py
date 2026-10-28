@@ -12,7 +12,7 @@ from aula_sama import registry
 from aula_sama.config import get_settings
 from aula_sama.ingestion import pipeline
 from aula_sama.ingestion.indexer import Indexer
-from aula_sama.ingestion.parsers import AUDIO_VIDEO_SUFFIXES, ParseError
+from aula_sama.ingestion.parsers import AUDIO_VIDEO_SUFFIXES, IMAGE_SUFFIXES, ParseError
 from aula_sama.ingestion.storage import get_storage
 from aula_sama.models import SourceMetadata
 
@@ -98,16 +98,53 @@ def show_result(label: str, run) -> None:
 
 def tab_upload() -> None:
     files = st.file_uploader(
-        "PDF, Markdown, texto, audio o video",
-        type=["pdf", "md", "txt", *(s.lstrip(".") for s in AUDIO_VIDEO_SUFFIXES)],
+        "PDF, Markdown, texto, imágenes, zip, audio o video",
+        type=["pdf", "md", "txt", "zip", *(s.lstrip(".") for s in IMAGE_SUFFIXES + AUDIO_VIDEO_SUFFIXES)],
         accept_multiple_files=True,
-        help="Los PDF escaneados pasan por OCR. El audio y el video se transcriben con OpenAI (~USD 0,27/hora).",
+        help=(
+            "Los PDF escaneados pasan por OCR. Las imágenes se convierten a texto con Claude (~USD 0,03 c/u). "
+            "Un zip crea una fuente por carpeta con imágenes. El audio y el video se transcriben con OpenAI "
+            "(~USD 0,27/hora)."
+        ),
     )
+    files = files or []
+    images = [f for f in files if f.name.lower().endswith(IMAGE_SUFFIXES)]
+    zips = [f for f in files if f.name.lower().endswith(".zip")]
+    others = [f for f in files if f not in images and f not in zips]
     meta, source_id = metadata_form("up", title_required=False)
-    if len(files or []) > 1 and (meta.title or source_id):
+    if images:
+        st.info(
+            "Con título, las imágenes subidas juntas forman una sola fuente (cada imagen es una página). "
+            "Sin título, cada imagen es una fuente aparte."
+        )
+    if len(others) > 1 and (meta.title or source_id):
         st.info("Con varios archivos, el título y el ID se derivan de cada nombre de archivo.")
-    if st.button("Ingestar documentos", type="primary", disabled=not files):
-        for f in files:
+    if st.button("Ingestar", type="primary", disabled=not files):
+        if images and (meta.title or source_id):
+            data = [(f.name, f.getvalue()) for f in images]
+            show_result(f"{len(images)} imágenes", lambda: pipeline.ingest_images(data, meta, source_id))
+        else:
+            for f in images:
+                m = SourceMetadata(**{**meta.__dict__, "title": f.name.rsplit(".", 1)[0]})
+                show_result(f.name, lambda f=f, m=m: pipeline.ingest_images([(f.name, f.getvalue())], m))
+        for z in zips:
+            with st.status(f"Procesando {z.name}…", expanded=True) as status:
+                try:
+                    results, skipped = pipeline.ingest_zip(z.getvalue(), SourceMetadata(**{**meta.__dict__}))
+                except ParseError as exc:
+                    status.update(label=f"{z.name}: {exc}", state="error")
+                    continue
+                for r in results:
+                    icon = "❌" if r.status == "failed" else "✅"
+                    st.write(f"{icon} `{r.source_id}` v{r.version} [{r.status}] {r.n_chunks} chunks {r.error}")
+                if skipped:
+                    st.caption("Omitidos: " + ", ".join(skipped))
+                failed = sum(r.status == "failed" for r in results)
+                status.update(
+                    label=f"{z.name}: {len(results)} fuentes" + (f", {failed} con error" if failed else ""),
+                    state="error" if failed else "complete",
+                )
+        for f in others:
             m = SourceMetadata(**{**meta.__dict__})
             single = len(files) == 1
             m.title = (meta.title if single else "") or f.name.rsplit(".", 1)[0]
