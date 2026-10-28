@@ -43,6 +43,21 @@ class Settings(BaseSettings):
     # Resolución a la que se renderizan las páginas escaneadas para el OCR
     ocr_dpi: int = 300
 
+    # Retrieval: candidatos de la búsqueda híbrida → reranker → evidencia para el LLM
+    retrieval_prefetch: int = 30
+    retrieval_candidates: int = 25
+    rerank_model: str = "rerank-3"
+    rerank_top_k: int = 6
+
+    # Evidence gate (scores del reranker, 0-1). Provisionales: calibrar con el conjunto de evaluación
+    evidence_min_top_score: float = 0.75
+    evidence_min_chunk_score: float = 0.5
+
+    # Chat (Claude)
+    chat_model: str = "claude-opus-5-5"
+    classify_effort: str = "low"
+    answer_effort: str = "medium"
+
     chunk_target_tokens: int = 650
     chunk_overlap_tokens: int = 80
 

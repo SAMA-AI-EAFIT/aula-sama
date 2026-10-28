@@ -24,6 +24,7 @@ dependencies = [
     "imageio-ffmpeg>=0.7.0",
     "anthropic>=2.3.0",
     "pillow>=13.0.0",
+    "langgraph>=1.2.18",
 ]
 
 [dependency-groups]

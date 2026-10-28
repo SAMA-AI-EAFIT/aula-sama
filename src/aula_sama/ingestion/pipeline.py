@@ -65,22 +65,33 @@ def ingest_images(
 def ingest_zip(data: bytes, meta: SourceMetadata) -> tuple[list[IngestResult], list[str]]:
     """Cada carpeta con imágenes dentro del zip se ingiere como una fuente aparte.
 
-    El título es la ruta completa de la carpeta: carpetas homónimas en zips distintos
+    El ID de fuente es la ruta completa de la carpeta: carpetas homónimas en zips distintos
     (p. ej. "mov en masa" en banners y en el material base) no deben pisarse.
     """
     groups, skipped = parsers.read_zip_images(data)
-    titles = {f: " / ".join(p.strip().capitalize() for p in Path(f).parts if p != ".") or "Imágenes" for f in groups}
-    ids = [slugify(t) for t in titles.values()]
-    if len(set(ids)) != len(ids):
+    ids = {f: slugify(" ".join(Path(f).parts)) for f in groups}
+    if len(set(ids.values())) != len(ids):
         raise parsers.ParseError("Dos carpetas del zip producen el mismo ID de fuente; renombra una.")
     results = []
     for folder, images in groups.items():
-        m = SourceMetadata(**{**meta.__dict__, "title": titles[folder]})
+        m = SourceMetadata(**{**meta.__dict__, "title": folder_title(folder)})
         try:
-            results.append(ingest_images(images, m))
+            results.append(ingest_images(images, m, ids[folder]))
         except parsers.ParseError as exc:
             results.append(IngestResult(slugify(m.title), 0, "failed", error=str(exc)))
     return results, skipped
+
+
+def folder_title(folder: str) -> str:
+    """Título legible: la carpeta y, como contexto, la carpeta raíz ("Mov en masa · Material base aula sama")."""
+    parts = [p.strip() for p in Path(folder).parts if p.strip(" .") and p.strip().lower() not in _NOISE_FOLDERS]
+    if not parts:
+        return "Imágenes"
+    title = parts[-1].capitalize()
+    return f"{title} · {parts[0].capitalize()}" if len(parts) > 1 else title
+
+
+_NOISE_FOLDERS = {"ok", "imagenes ok", "imgs ok"}
 
 
 def ingest_youtube(url: str, meta: SourceMetadata, source_id: str | None = None) -> IngestResult:

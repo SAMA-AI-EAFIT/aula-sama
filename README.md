@@ -61,6 +61,7 @@ uv sync                      # crea .venv con Python 3.12 y las versiones fijada
 cp .env.example .env         # completar API keys (nunca commitear .env)
 docker compose up -d         # Qdrant + PostgreSQL locales
 uv run streamlit run src/aula_sama/admin/app.py   # pantalla de administración
+uv run streamlit run src/aula_sama/chat/app.py --server.port 8502   # chat (demo)
 uv run pytest                # tests
 ```
 
@@ -82,6 +83,10 @@ El código se sincroniza con git; **los datos no**. Con `docker compose` cada eq
 ### Pipeline de ingesta
 
 `src/aula_sama/ingestion/`: registro de fuente → snapshot del original → parse (PDF con `pymupdf4llm` y OCR automático en páginas sin texto; YouTube con sus subtítulos o, si no tiene, audio vía `yt-dlp` transcrito con OpenAI `gpt-transcribe` en ventanas cortadas en silencios para conservar timestamps; archivos de audio/video igual; imágenes e infografías convertidas a Markdown con Claude (visión), en orden de lectura y con descripción de mapas/colores; un zip crea una fuente por carpeta; web con `trafilatura`) → chunking estructural (~650 tokens, respetando encabezados y conservando página o timestamps) → embeddings Voyage (`input_type="document"`) + BM25 sparse (`fastembed`) → upsert en Qdrant con IDs deterministas. Reingestar un original idéntico no hace nada; uno modificado crea una versión nueva y reemplaza sus chunks.
+
+### Flujo de respuesta (chat)
+
+`src/aula_sama/graph/` (LangGraph): `classify_request` (Claude, salida estructurada: clase + consulta autocontenida que resuelve el contexto conversacional) → `retrieve_hybrid` (dense + BM25, RRF, 25 candidatos) → `rerank` (Voyage, top 6) → `assess_evidence` (gate determinista sobre el score del reranker; umbrales provisionales en `.env`) → `generate_answer` (Claude con bloques `search_result`: las citas las produce la API y se validan contra la evidencia entregada) → `attach_citations`. Emergencias/consultas en tiempo real, temas fuera de alcance y evidencia insuficiente van a `escalate` con mensajes fijos. La memoria conversacional es `InMemorySaver` (se pierde al reiniciar).
 
 ## Estado
 
