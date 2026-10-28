@@ -73,3 +73,21 @@ def test_transcript_chunks_keep_timestamps():
     assert chunks[-1].end == 200 * 3.0
     assert chunks[1].start < chunks[0].end  # solapamiento
     assert chunks[0].locator.startswith("0:00-")
+
+
+def test_ocr_reads_scanned_spanish_page():
+    import pymupdf
+
+    from aula_sama.ingestion.parsers import parse_pdf
+
+    text = "Señales de alerta: crecientes súbitas en la quebrada, ruido fuerte aguas arriba y agua turbia."
+    page = pymupdf.open().new_page()
+    page.insert_textbox(pymupdf.Rect(72, 72, 520, 300), text, fontsize=13)
+    pix = page.get_pixmap(dpi=150)
+    scan = pymupdf.open()
+    scan.new_page(width=page.rect.width, height=page.rect.height).insert_image(page.rect, pixmap=pix)
+
+    doc = parse_pdf(scan.tobytes())
+    ocr = " ".join(doc.markdown.split())
+    for word in ("Señales", "súbitas", "quebrada", "turbia"):
+        assert word in ocr

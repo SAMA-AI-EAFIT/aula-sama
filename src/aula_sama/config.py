@@ -36,8 +36,7 @@ class Settings(BaseSettings):
         "Área Metropolitana", "avenida torrencial", "movimiento en masa", "río Medellín",
     ]
 
-    # OCR para PDFs escaneados: usa Tesseract si está instalado (mejor en español), si no RapidOCR
-    ocr_language: str = "spa"
+    # Resolución a la que se renderizan las páginas escaneadas para el OCR
     ocr_dpi: int = 300
 
     chunk_target_tokens: int = 650

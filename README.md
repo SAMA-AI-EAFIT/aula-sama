@@ -54,11 +54,7 @@ La arquitectura detallada, decisiones técnicas y criterios de evolución están
 
 ## Desarrollo
 
-Requisitos: [uv](https://docs.astral.sh/uv/), Docker, `ffmpeg` y Tesseract con español (OCR de PDFs escaneados):
-
-```bash
-sudo apt install ffmpeg tesseract-ocr tesseract-ocr-spa
-```
+Requisitos: [uv](https://docs.astral.sh/uv/) y Docker. Todo lo demás (OCR, `ffmpeg`, runtime JS de `yt-dlp`) se instala dentro del entorno con `uv sync`.
 
 ```bash
 uv sync                      # crea .venv con Python 3.12 y las versiones fijadas en uv.lock

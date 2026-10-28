@@ -3,6 +3,7 @@
 import json
 import re
 import tempfile
+from functools import cache
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -25,11 +26,10 @@ def parse_pdf(data: bytes) -> ParsedDocument:
     import pymupdf
     import pymupdf4llm
 
-    settings = get_settings()
     with pymupdf.open(stream=data, filetype="pdf") as doc:
         # El OCR solo se aplica a las páginas (o regiones) sin texto extraíble
         pages = pymupdf4llm.to_markdown(
-            doc, page_chunks=True, ocr_language=settings.ocr_language, ocr_dpi=settings.ocr_dpi
+            doc, page_chunks=True, ocr_function=_ocr_function(), ocr_dpi=get_settings().ocr_dpi
         )
         title = (doc.metadata or {}).get("title", "")
     segments = [
@@ -38,6 +38,29 @@ def parse_pdf(data: bytes) -> ParsedDocument:
     if not segments:
         raise ParseError("No se pudo extraer texto del PDF, ni siquiera con OCR.")
     return ParsedDocument(source_type="pdf", segments=segments, title_hint=title)
+
+
+@cache
+def _ocr_function():
+    """OCR con RapidOCR (instalado con pip, sin dependencias del sistema) y su modelo latino.
+
+    Por defecto pymupdf4llm usa el modelo chino/inglés con imágenes reducidas a 2000 px,
+    que pierde tildes y líneas largas. Reemplazamos su motor antes del primer uso; depende
+    de internos de pymupdf4llm, por eso las versiones quedan fijadas en uv.lock.
+    """
+    from pymupdf4llm.ocr import rapidocr_391_backend, rapidocr_api
+    from rapidocr import RapidOCR
+    from rapidocr.utils.typings import LangRec, ModelType, OCRVersion
+
+    rapidocr_391_backend.ENGINE = RapidOCR(
+        params={
+            "Global.max_side_len": 4000,
+            "Rec.lang_type": LangRec.LATIN,
+            "Rec.ocr_version": OCRVersion.PPOCRV5,
+            "Rec.model_type": ModelType.MOBILE,
+        }
+    )
+    return rapidocr_api.exec_ocr
 
 
 def parse_text(data: bytes, filename: str = "") -> ParsedDocument:

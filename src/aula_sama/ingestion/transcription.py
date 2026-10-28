@@ -114,8 +114,15 @@ def _keywords(terms: list[str]) -> list[str]:
     return clean
 
 
+def ffmpeg_exe() -> str:
+    """Binario de ffmpeg incluido en el paquete imageio-ffmpeg: no requiere instalarlo en el sistema."""
+    import imageio_ffmpeg
+
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
 def _ffmpeg(*args: str) -> str:
-    proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostdin", *args], capture_output=True, text=True)
+    proc = subprocess.run([ffmpeg_exe(), "-hide_banner", "-nostdin", *args], capture_output=True, text=True)
     if proc.returncode != 0:
         raise TranscriptionError(f"ffmpeg falló: {proc.stderr[-500:]}")
     return proc.stderr

@@ -21,6 +21,7 @@ dependencies = [
     "yt-dlp[default]>=2026.10.26",
     "rapidocr>=3.10.0",
     "deno>=2.9.8",
+    "imageio-ffmpeg>=0.7.0",
 ]
 
 [dependency-groups]

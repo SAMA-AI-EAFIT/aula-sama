@@ -1,4 +1,3 @@
-import shutil
 import subprocess
 from types import SimpleNamespace
 
@@ -32,12 +31,11 @@ def test_keywords_are_sanitized_and_deduplicated():
     assert _keywords(["SIATA", "siata", "  Río <Medellín>\n", ""]) == ["SIATA", "Río  Medellín"]
 
 
-@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="requiere ffmpeg")
 def test_transcribe_file_splits_audio_and_keeps_timestamps(tmp_path, monkeypatch):
     # 200 s: tono / 1 s de silencio / tono → debe cortar en el silencio cerca de 90 s
     audio = tmp_path / "talk.wav"
     subprocess.run(
-        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=89",
+        [transcription.ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=89",
          "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono:d=1", "-f", "lavfi", "-i", "sine=frequency=440:duration=110",
          "-filter_complex", "[0][1][2]concat=n=3:v=0:a=1", str(audio)],
         check=True,
