@@ -52,6 +52,37 @@ La arquitectura detallada, decisiones técnicas y criterios de evolución están
 └── .env.example
 ```
 
+## Desarrollo
+
+Requisitos: [uv](https://docs.astral.sh/uv/) y Docker.
+
+```bash
+uv sync                      # crea .venv con Python 3.12 y las versiones fijadas en uv.lock
+cp .env.example .env         # completar API keys (nunca commitear .env)
+docker compose up -d         # Qdrant + PostgreSQL locales
+uv run streamlit run src/aula_sama/admin/app.py   # pantalla de administración
+uv run pytest                # tests
+```
+
+Ingesta por línea de comandos (útil para cargas en lote):
+
+```bash
+uv run aula-sama-ingest corpus/*.pdf --publisher DAGRAN --hazard inundacion
+uv run aula-sama-ingest "https://www.youtube.com/watch?v=..." --title "Charla SIATA"
+```
+
+### Trabajo en varios equipos
+
+El código se sincroniza con git; **los datos no**. Con `docker compose` cada equipo tiene su propio Qdrant, PostgreSQL y `data/storage`. Para compartir el corpus, apuntar `.env` en ambos equipos a los mismos servicios gestionados:
+
+- `QDRANT_URL` / `QDRANT_API_KEY` → Qdrant Cloud.
+- `DATABASE_URL` → PostgreSQL gestionado (p. ej. Supabase o Neon).
+- `STORAGE_BACKEND=s3` + `S3_*` → bucket S3-compatible (p. ej. Supabase Storage o Cloudflare R2).
+
+### Pipeline de ingesta
+
+`src/aula_sama/ingestion/`: registro de fuente → snapshot del original → parse (PDF con `pymupdf4llm`, YouTube con `youtube-transcript-api`, web con `trafilatura`) → chunking estructural (~650 tokens, respetando encabezados y conservando página o timestamps) → embeddings Voyage (`input_type="document"`) + BM25 sparse (`fastembed`) → upsert en Qdrant con IDs deterministas. Reingestar un original idéntico no hace nada; uno modificado crea una versión nueva y reemplaza sus chunks.
+
 ## Estado
 
-Arquitectura propuesta y lista para comenzar implementación. Antes de fijar umbrales y modelos definitivos se debe construir un pequeño conjunto de evaluación con preguntas reales de la comunidad y documentos oficiales del corpus inicial.
+Pipeline de ingesta y pantalla de administración implementados. Antes de fijar umbrales y modelos definitivos se debe construir un pequeño conjunto de evaluación con preguntas reales de la comunidad y documentos oficiales del corpus inicial.

@@ -1,0 +1,19 @@
+# Servicios locales de desarrollo. Para compartir datos entre equipos,
+# apunta QDRANT_URL / DATABASE_URL / S3_* a servicios gestionados en .env.
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.20.0
+    ports: ["6333:6333"]
+    volumes: ["qdrant_data:/qdrant/storage"]
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: aula_sama
+    ports: ["5432:5432"]
+    volumes: ["pg_data:/var/lib/postgresql/data"]
+
+volumes:
+  qdrant_data:
+  pg_data:

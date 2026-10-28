@@ -1,0 +1,131 @@
+"""Orquestación de la ingesta: registro → snapshot → parse → chunks → Qdrant.
+
+Idempotente: si el contenido (hash) no cambió respecto a la versión indexada, no
+se hace nada. Si cambió, se crea una versión nueva y se reemplazan sus chunks.
+"""
+
+import hashlib
+import re
+import unicodedata
+from dataclasses import dataclass
+from pathlib import Path
+
+from sqlalchemy import func, select
+
+from aula_sama import registry
+from aula_sama.config import get_settings
+from aula_sama.ingestion import parsers
+from aula_sama.ingestion.chunking import chunk_document
+from aula_sama.ingestion.indexer import Indexer
+from aula_sama.ingestion.storage import get_storage
+from aula_sama.models import ParsedDocument, SourceMetadata
+
+
+@dataclass
+class IngestResult:
+    source_id: str
+    version: int
+    status: str  # indexed | unchanged | failed
+    n_chunks: int = 0
+    error: str = ""
+
+
+def slugify(text: str, max_len: int = 80) -> str:
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    text = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
+    return text[:max_len].rstrip("-") or "fuente"
+
+
+def ingest_upload(data: bytes, filename: str, meta: SourceMetadata, source_id: str | None = None) -> IngestResult:
+    doc = parsers.parse_upload(data, filename)
+    return _ingest(doc, data, Path(filename).suffix.lower() or ".bin", meta, source_id)
+
+
+def ingest_youtube(url: str, meta: SourceMetadata, source_id: str | None = None) -> IngestResult:
+    doc, raw = parsers.fetch_youtube(url)
+    meta.title = meta.title or doc.title_hint
+    return _ingest(doc, raw, ".transcript.json", meta, source_id or f"yt-{parsers.youtube_video_id(url)}")
+
+
+def ingest_web(url: str, meta: SourceMetadata, source_id: str | None = None) -> IngestResult:
+    doc, raw = parsers.fetch_web(url)
+    meta.title = meta.title or doc.title_hint
+    suffix = ".pdf" if doc.source_type == "pdf" else ".html"
+    return _ingest(doc, raw, suffix, meta, source_id)
+
+
+def _ingest(
+    doc: ParsedDocument, raw: bytes, suffix: str, meta: SourceMetadata, source_id: str | None
+) -> IngestResult:
+    settings = get_settings()
+    meta.title = meta.title or doc.title_hint or "Sin título"
+    source_id = slugify(source_id or meta.title)
+    content_hash = hashlib.sha256(raw).hexdigest()
+    storage = get_storage(settings)
+    indexer = Indexer(settings)
+
+    with registry.session() as db:
+        source = registry.get_source(db, source_id)
+        if source is None:
+            source = registry.Source(source_id=source_id, source_type=doc.source_type)
+            db.add(source)
+        _apply_meta(source, meta, doc)
+
+        latest = source.versions[-1] if source.versions else None
+        if latest and latest.content_hash == content_hash and latest.status == "indexed":
+            db.commit()  # puede haber cambiado solo la metadata editorial
+            return IngestResult(source_id, latest.version, "unchanged", latest.n_chunks)
+
+        db.flush()
+        version_no = (db.scalar(select(func.max(registry.SourceVersion.version)).where(
+            registry.SourceVersion.source_pk == source.id)) or 0) + 1
+        prefix = f"sources/{source_id}/v{version_no}"
+        version = registry.SourceVersion(
+            source=source,
+            version=version_no,
+            content_hash=content_hash,
+            original_key=storage.put(f"{prefix}/original{suffix}", raw),
+            markdown_key=storage.put(f"{prefix}/content.md", doc.markdown.encode()),
+            status="processing",
+            embedding_model=settings.embedding_model,
+        )
+        db.add(version)
+        db.commit()
+
+        try:
+            chunks = chunk_document(
+                doc, source_id, version_no, settings.chunk_target_tokens, settings.chunk_overlap_tokens
+            )
+            n = indexer.upsert(chunks, meta, doc.source_type, source.uri)
+            indexer.delete_source(source_id, keep_version=version_no)
+        except Exception as exc:
+            version.status, version.error = "failed", f"{exc.__class__.__name__}: {exc}"
+            db.commit()
+            return IngestResult(source_id, version_no, "failed", error=version.error)
+
+        version.status, version.n_chunks = "indexed", n
+        source.current_version = version_no
+        db.commit()
+        return IngestResult(source_id, version_no, "indexed", n)
+
+
+def _apply_meta(source: registry.Source, meta: SourceMetadata, doc: ParsedDocument) -> None:
+    source.title = meta.title
+    source.uri = doc.uri or source.uri or ""
+    source.publisher = meta.publisher
+    source.authority = meta.authority
+    source.hazards = list(meta.hazards)
+    source.municipalities = list(meta.municipalities)
+    source.published_on = meta.published_on
+    source.language = meta.language
+    source.notes = meta.notes
+
+
+def delete_source(source_id: str) -> None:
+    """Elimina la fuente del índice, del registro y del almacenamiento."""
+    Indexer().delete_source(source_id)
+    get_storage().delete_prefix(f"sources/{source_id}/")
+    with registry.session() as db:
+        if source := registry.get_source(db, source_id):
+            db.delete(source)
+            db.commit()
