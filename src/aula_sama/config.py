@@ -36,6 +36,16 @@ class Settings(BaseSettings):
         "Área Metropolitana", "avenida torrencial", "movimiento en masa", "río Medellín",
     ]
 
+    # Voz de la guardiana en el chat (texto a voz de OpenAI). tts_voice acepta una voz integrada
+    # ("marin", "coral"...) o el ID "voice_..." de una voz personalizada
+    tts_model: str = "gpt-4o-mini-tts"
+    tts_voice: str = "marin"
+    tts_instructions: str = (
+        "Habla en español colombiano con un acento paisa (antioqueño) natural y suave. Voz cálida, "
+        "cercana y serena de una mujer joven; ritmo pausado y claro, sin exagerar el acento. Lee "
+        "SAMA y DAGRAN como palabras. Si el texto habla de una emergencia, usa un tono firme y calmado."
+    )
+
     # Imágenes (infografías) → Markdown con Claude
     vision_model: str = "claude-opus-5-5"
     vision_effort: str = "low"
@@ -57,6 +67,11 @@ class Settings(BaseSettings):
     chat_model: str = "claude-opus-5-5"
     classify_effort: str = "low"
     answer_effort: str = "medium"
+
+    # Límites de uso del chat (protegen costo y reducen intentos de manipulación)
+    max_input_chars: int = 1000
+    max_turns_per_conversation: int = 30
+    max_messages_per_minute: int = 8
 
     chunk_target_tokens: int = 650
     chunk_overlap_tokens: int = 80

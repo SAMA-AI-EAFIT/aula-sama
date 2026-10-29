@@ -12,13 +12,15 @@ from aula_sama.config import get_settings
 from aula_sama.prompts import ANSWER_SYSTEM, CLASSIFY_SYSTEM
 
 _FALLBACK_BETA = "server-side-fallback-2026-07-01"
-RequestClass = Literal["educational_in_scope", "operational_or_emergency", "out_of_scope", "conversational"]
+RequestClass = Literal[
+    "educational_in_scope", "emergency", "current_status", "needs_clarification", "out_of_scope", "conversational"
+]
 
 
 class Classification(BaseModel):
     request_class: RequestClass
     retrieval_query: str
-    conversational_reply: str
+    reply: str  # saludo (conversational) o pregunta aclaratoria (needs_clarification)
 
 
 @dataclass
@@ -62,7 +64,7 @@ def classify(question: str, history: list[dict]) -> Classification:
     )
     if response.stop_reason == "refusal" or response.parsed_output is None:
         # Ante la duda, tratar como potencialmente sensible: el grafo responde con el mensaje seguro
-        return Classification(request_class="operational_or_emergency", retrieval_query="", conversational_reply="")
+        return Classification(request_class="emergency", retrieval_query="", reply="")
     return response.parsed_output
 
 
