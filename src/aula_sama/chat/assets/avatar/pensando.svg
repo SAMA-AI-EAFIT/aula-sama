@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="Guardiana virtual de Aula SAMA (pensando)">
+<title>Guardiana virtual de Aula SAMA — ilustración provisional (pensando)</title>
+<circle cx="100" cy="100" r="100" fill="#e4ecf5"/>
+<clipPath id="c"><circle cx="100" cy="100" r="100"/></clipPath>
+<g clip-path="url(#c)">
+  <!-- cabello largo (detrás) -->
+  <path d="M48 92 Q44 40 100 34 Q156 40 152 92 L160 196 L40 196 Z" fill="#5b3420"/>
+  <!-- cuello y torso con chaqueta verde -->
+  <rect x="88" y="132" width="24" height="26" fill="#c98e6b"/>
+  <path d="M34 200 Q38 160 78 150 L100 170 L122 150 Q162 160 166 200 Z" fill="#2f7d5b"/>
+  <path d="M78 150 L100 170 L122 150 L114 147 L100 160 L86 147 Z" fill="#f3efe6"/>
+  <!-- hoja (insignia) -->
+  <path d="M135 172 Q146 160 154 166 Q146 180 135 172 Z" fill="#9ccc65"/>
+  <path d="M136 171 L150 166" stroke="#2f7d5b" stroke-width="1.2"/>
+  <!-- cara -->
+  <ellipse cx="100" cy="102" rx="36" ry="42" fill="#d9a07c"/>
+  <ellipse cx="64" cy="104" rx="5" ry="8" fill="#c98e6b"/>
+  <ellipse cx="136" cy="104" rx="5" ry="8" fill="#c98e6b"/>
+  <!-- flequillo y raya -->
+  <path d="M63 92 Q62 56 100 54 Q140 56 138 92 Q126 70 102 66 Q86 76 63 92 Z" fill="#5b3420"/>
+  <!-- rubor -->
+  <ellipse cx="76" cy="114" rx="7" ry="4" fill="#e58f7a" opacity=".45"/>
+  <ellipse cx="124" cy="114" rx="7" ry="4" fill="#e58f7a" opacity=".45"/>
+  <path d="M70 87 Q80 84 90 87" fill="none" stroke="#4a2c1d" stroke-width="3.4" stroke-linecap="round"/><path d="M110 81 Q120 76 130 82" fill="none" stroke="#4a2c1d" stroke-width="3.4" stroke-linecap="round"/><ellipse cx="80" cy="98" rx="5" ry="6.2" fill="#2b1b12"/><circle cx="78.6" cy="94.5" r="1.6" fill="#fff"/><ellipse cx="120" cy="98" rx="5" ry="6.2" fill="#2b1b12"/><circle cx="118.6" cy="94.5" r="1.6" fill="#fff"/>
+  <path d="M100 103 Q97 113 101 115" fill="none" stroke="#b77756" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M92 127 Q101 124 110 126" fill="none" stroke="#7a3b2e" stroke-width="3.2" stroke-linecap="round"/>
+</g>
+</svg>

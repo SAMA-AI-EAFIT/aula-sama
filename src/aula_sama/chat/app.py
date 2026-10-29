@@ -3,10 +3,14 @@
     uv run streamlit run src/aula_sama/chat/app.py --server.port 8502
 """
 
+import time
 import uuid
 
 import streamlit as st
 
+from aula_sama import prompts
+from aula_sama.chat import persona
+from aula_sama.config import get_settings
 from aula_sama.graph import build_graph
 
 st.set_page_config(page_title="Aula SAMA", page_icon="🌧️")
@@ -39,36 +43,75 @@ def render_trace(trace: dict) -> None:
         st.json(trace, expanded=False)
 
 
+def render_voice(i: int, msg: dict) -> None:
+    """Botón para escuchar la respuesta; el audio se genera una vez y queda en la sesión."""
+    if st.button("🔊 Escuchar", key=f"tts-{i}", type="tertiary"):
+        try:
+            with st.spinner("Generando audio…"):
+                msg["audio"] = persona.synthesize(msg["content"])
+            msg["autoplay"] = True
+        except Exception:
+            st.caption("No pude generar el audio en este momento.")
+    if msg.get("audio"):
+        st.audio(msg["audio"], format="audio/mp3", autoplay=msg.pop("autoplay", False))
+
+
+def add_answer(content: str, expression: str, **extra) -> None:
+    st.session_state.history.append({"role": "assistant", "content": content, "expression": expression, **extra})
+
+
 def new_conversation() -> None:
     st.session_state.thread_id = str(uuid.uuid4())
     st.session_state.history = []
+
+
+def usage_limit_message() -> str | None:
+    """Límites por sesión del navegador: turnos por conversación y mensajes por minuto."""
+    s = get_settings()
+    if sum(m["role"] == "user" for m in st.session_state.history) >= s.max_turns_per_conversation:
+        return prompts.TURN_LIMIT_MESSAGE
+    now = time.monotonic()
+    recent = [t for t in st.session_state.get("sent_at", []) if now - t < 60]
+    if len(recent) >= s.max_messages_per_minute:
+        st.session_state.sent_at = recent
+        return prompts.RATE_LIMIT_MESSAGE
+    st.session_state.sent_at = [*recent, now]
+    return None
 
 
 if "thread_id" not in st.session_state:
     new_conversation()
 
 with st.sidebar:
-    st.markdown("### Aula SAMA")
+    st.image(persona.avatar("neutral"), width=140)
+    st.markdown("### Guardiana virtual de Aula SAMA")
     st.caption(
-        "Asistente educativo sobre gestión del riesgo en Antioquia. Responde solo con el material "
-        "de Aula SAMA y cita sus fuentes. **No emite alertas ni tiene datos en tiempo real.** "
-        "En una emergencia, llama al **123**."
+        "Un asistente de IA que le ayuda a aprender sobre gestión del riesgo en Antioquia. Responde "
+        "solo con el material de Aula SAMA y cita sus fuentes. **No emite alertas ni tiene datos en "
+        "tiempo real.** En una emergencia, llame al **123**."
     )
     st.button("Nueva conversación", on_click=new_conversation, width="stretch")
+    voice = st.toggle("Escuchar respuestas", value=bool(get_settings().openai_api_key))
     show_trace = st.toggle("Mostrar detalles técnicos", value=False)
 
 st.title("Aula SAMA")
 
-for msg in st.session_state.history:
-    with st.chat_message(msg["role"]):
+with st.chat_message("assistant", avatar=persona.avatar("neutral")):
+    st.markdown(prompts.WELCOME_MESSAGE)
+
+for i, msg in enumerate(st.session_state.history):
+    is_bot = msg["role"] == "assistant"
+    with st.chat_message(msg["role"], avatar=persona.avatar(msg.get("expression", "neutral")) if is_bot else None):
         st.markdown(msg["content"])
         render_sources(msg.get("citations", []))
+        if is_bot and voice:
+            render_voice(i, msg)
         if show_trace and msg.get("trace"):
             render_trace(msg["trace"])
 
-prompt = st.chat_input("Escribe tu pregunta sobre gestión del riesgo…")
+prompt = st.chat_input("Escriba su pregunta sobre gestión del riesgo…", max_chars=get_settings().max_input_chars)
 if not st.session_state.history and not prompt:
-    st.caption("Prueba con:")
+    st.caption("Pruebe con:")
     cols = st.columns(2)
     for i, example in enumerate(EXAMPLES):
         if cols[i % 2].button(example, width="stretch"):
@@ -79,7 +122,11 @@ if prompt:
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    with st.chat_message("assistant"):
+    if limit := usage_limit_message():
+        add_answer(limit, "pensando")
+        st.rerun()
+
+    with st.chat_message("assistant", avatar=persona.avatar("pensando")):
         placeholder = st.empty()
         placeholder.markdown("_Buscando en el material de Aula SAMA…_")
         streamed, state = "", {}
@@ -93,27 +140,25 @@ if prompt:
                     placeholder.markdown(streamed + "▌")
                 elif mode == "values":
                     state = chunk
-        except Exception as exc:  # la demo no debe romperse por un error de red o de API
-            placeholder.error("Ocurrió un error al generar la respuesta. Intenta de nuevo.")
-            if show_trace:
-                st.exception(exc)
-            st.stop()
+        except Exception as exc:  # error de red o de API: nunca dejar a la persona sin la ruta de emergencia
+            add_answer(prompts.SERVICE_UNAVAILABLE_MESSAGE, "seria", trace={"error": repr(exc)})
+            st.rerun()
 
-        answer = state.get("answer") or "No pude generar una respuesta."
-        placeholder.markdown(answer)
-        citations = state.get("citations", [])
-        render_sources(citations)
-        trace = {
+    citations = state.get("citations", [])
+    # Se vuelve a dibujar desde el historial: así la respuesta queda con su expresión y el botón de voz
+    add_answer(
+        state.get("answer") or "No pude generar una respuesta.",
+        persona.expression_for(state.get("request_class"), state.get("evidence_status"), citations),
+        citations=citations,
+        trace={
             "clase": state.get("request_class"),
             "consulta": state.get("retrieval_query"),
             "evidencia": state.get("evidence_status"),
             "razón": state.get("route_reason"),
+            "guardrails": state.get("guardrail_flags", []),
             "rerank": [
                 {"chunk": e["chunk_id"], "score": round(e["rerank_score"] or 0, 3)} for e in state.get("evidence", [])
             ],
-        }
-        if show_trace:
-            render_trace(trace)
-    st.session_state.history.append(
-        {"role": "assistant", "content": answer, "citations": citations, "trace": trace}
+        },
     )
+    st.rerun()
