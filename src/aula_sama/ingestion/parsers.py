@@ -1,11 +1,13 @@
 """Conversión de originales a segmentos con ubicación (página o timestamps)."""
 
 import hashlib
+import io
 import json
 import re
 import tempfile
 import zipfile
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from functools import cache
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -259,11 +261,169 @@ def _zip_name(info: zipfile.ZipInfo) -> str:
         return info.filename
 
 
+MIN_FIGURE_BYTES = 15_000  # imágenes menores suelen ser íconos o logos: no vale la pena describirlas
+
+
+def parse_docx(data: bytes, filename: str = "") -> ParsedDocument:
+    """Word → Markdown en el orden del documento: párrafos, listas, tablas y figuras.
+
+    Las figuras se convierten a texto con Claude (visión) en su posición, usando el pie de
+    figura cercano como contexto; muchos documentos técnicos tienen el contenido en imágenes.
+    """
+    import docx
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    try:
+        document = docx.Document(io.BytesIO(data))
+    except Exception as exc:
+        raise ParseError(f"No se pudo abrir el documento Word: {exc}") from exc
+
+    blocks: list[str | tuple[str, bytes]] = []  # texto, o (nombre, bytes) de una figura pendiente
+    for item in document.iter_inner_content():
+        if isinstance(item, Table):
+            blocks.append(_docx_table(item))
+            continue
+        assert isinstance(item, Paragraph)
+        blocks.extend(_docx_figures(item, document))
+        if text := _docx_paragraph(item):
+            blocks.append(text)
+
+    figures = [b for b in blocks if isinstance(b, tuple)]
+    if figures:
+        texts = _docx_figure_texts(blocks, filename)
+        it = iter(texts)
+        blocks = [f"{next(it)}\n\n_Figura del documento_" if isinstance(b, tuple) else b for b in blocks]
+    text = "\n\n".join(b for b in blocks if b.strip())
+    if not text.strip():
+        raise ParseError("El documento Word no tiene texto ni figuras.")
+    # El título interno de Word suele ser basura de plantillas; el nombre del archivo es más fiable
+    return ParsedDocument(source_type="docx", segments=[Segment(text=text)], title_hint=Path(filename).stem)
+
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def docx_text(p) -> str:
+    """Texto de un párrafo de Word, incluidos los cambios con control aceptados.
+
+    `Paragraph.text` de python-docx omite el texto insertado con control de cambios (`w:ins`)
+    y el de algunos contenedores; aquí se lee todo `w:t` (lo borrado va en `w:delText`).
+    """
+    parts = []
+    for el in p._p.iter(f"{_W}t", f"{_W}tab", f"{_W}br", f"{_W}cr"):
+        parts.append(el.text or "" if el.tag == f"{_W}t" else "\t" if el.tag == f"{_W}tab" else "\n")
+    return "".join(parts)
+
+
+def docx_is_list(p) -> bool:
+    """Ítem de lista de Word: la numeración puede estar en el párrafo o heredarse del estilo."""
+    style = p.style
+    while style is not None:
+        if style.element.pPr is not None and style.element.pPr.numPr is not None:
+            return True
+        style = style.base_style
+    return p._p.pPr is not None and p._p.pPr.numPr is not None
+
+
+def _docx_paragraph(p) -> str:
+    text = re.sub(r"[ \t]+", " ", docx_text(p)).strip()
+    if not text:
+        return ""
+    style = (p.style.name if p.style is not None else "").lower()
+    if style == "title":
+        return f"# {text}"
+    if m := re.match(r"heading (\d)", style):
+        return f"{'#' * (int(m.group(1)) + 1)} {text}"
+    runs = [r for r in p.runs if r.text.strip()]
+    # Estos documentos no usan estilos de título: una línea corta toda en negrita hace de subtítulo
+    if runs and all(r.bold for r in runs) and len(text) <= 120 and "\n" not in text:
+        return f"### {text}"
+    if docx_is_list(p):
+        return f"- {text}"
+    return text
+
+
+_OLD_VERSION_HEADER = re.compile(r"\b(actual|anterior|vigente|versi[oó]n anterior)\b", re.I)
+_EDITORIAL_NOTE = re.compile(r"^\s*nota\s*:", re.I)
+
+
+def _docx_version_table(table) -> str | None:
+    """Tabla que compara la versión vigente de un texto con la nueva («Aula SAMA – Actual» |
+    «Aula SAMA 2026»): solo se indexa la última columna, para que el chat no cite textos
+    reemplazados. Las notas editoriales («Nota: Figura 2 (editar)») tampoco se indexan.
+    """
+    rows = table.rows
+    if len(rows) < 2 or len(rows[0].cells) < 2 or not _OLD_VERSION_HEADER.search(docx_text(rows[0].cells[0].paragraphs[0])):
+        return None
+    parts = []
+    for row in rows[1:]:
+        for p in row.cells[-1].paragraphs:
+            if text := _docx_paragraph(p):
+                # Una nota puede ir al final de un párrafo, tras un salto de línea
+                text = "\n".join(l for l in text.split("\n") if not _EDITORIAL_NOTE.match(l)).strip()
+                if text and not _EDITORIAL_NOTE.match(text.lstrip("#- ")):
+                    parts.append(text)
+    return "\n\n".join(parts)
+
+
+def _docx_table(table) -> str:
+    if (latest := _docx_version_table(table)) is not None:
+        return latest
+
+    def cell(c) -> str:
+        return re.sub(r"\s+", " ", " ".join(docx_text(p) for p in c.paragraphs)).strip().replace("|", "\\|")
+
+    rows = [[cell(c) for c in row.cells] for row in table.rows]
+    if not rows:
+        return ""
+    width = max(len(r) for r in rows)
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    if max(len(c) for r in rows for c in r) > 300:
+        # Celdas con párrafos enteros: como tabla Markdown quedan ilegibles y no se pueden partir en chunks
+        header = rows[0]
+        return "\n\n".join(
+            f"**{h or f'Columna {j + 1}'}:** {c}" for r in rows[1:] for j, (h, c) in enumerate(zip(header, r)) if c
+        )
+    lines =["| " + " | ".join(rows[0]) + " |", "|" + " --- |" * width]
+    lines += ["| " + " | ".join(r) + " |" for r in rows[1:]]
+    return "\n".join(lines)
+
+
+def _docx_figures(p, document) -> list[tuple[str, bytes]]:
+    out = []
+    for blip in p._p.xpath(".//a:blip"):
+        rid = blip.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
+        part = document.part.related_parts.get(rid) if rid else None
+        blob = getattr(part, "blob", b"")
+        if len(blob) >= MIN_FIGURE_BYTES:
+            out.append((Path(str(part.partname)).name, blob))
+    return out
+
+
+def _docx_figure_texts(blocks: list, filename: str) -> list[str]:
+    """Describe las figuras en paralelo; el contexto es el título y el texto que las rodea."""
+    figures, contexts = [], []
+    for i, b in enumerate(blocks):
+        if isinstance(b, tuple):
+            near = [x for x in blocks[max(0, i - 2) : i + 3] if isinstance(x, str)]
+            contexts.append(f"Figura del documento «{Path(filename).stem}». Texto cercano: {' / '.join(near)[:500]}")
+            figures.append(b)
+    settings = get_settings()
+    try:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            return list(pool.map(lambda fc: vision.describe_image(fc[0][1], fc[1], settings), zip(figures, contexts)))
+    except vision.VisionError as exc:
+        raise ParseError(f"No se pudieron procesar las figuras del documento: {exc}") from exc
+
+
 def parse_upload(data: bytes, filename: str) -> ParsedDocument:
-    """Documentos de texto (PDF/MD/TXT). Audio y video van por `parse_audio_video`."""
+    """Documentos de texto (PDF/Word/MD/TXT). Audio y video van por `parse_audio_video`."""
     suffix = Path(filename).suffix.lower()
     if suffix == ".pdf":
         return parse_pdf(data)
+    if suffix == ".docx":
+        return parse_docx(data, filename)
     if suffix in (".md", ".txt"):
         return parse_text(data, filename)
     raise ParseError(f"Tipo de archivo no soportado: {suffix or filename}")

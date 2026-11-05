@@ -46,6 +46,8 @@ def ingest_upload(data: bytes, filename: str, meta: SourceMetadata, source_id: s
             return cached
         doc, transcript = parsers.parse_audio_video(data, filename, meta.municipalities)
         return _ingest(doc, transcript, ".transcript.json", meta, source_id, content_hash)
+    if suffix == ".docx" and (cached := _unchanged(source_id or meta.title or Path(filename).stem, hashlib.sha256(data).hexdigest())):
+        return cached  # las figuras de un Word se describen con Claude: no volver a pagarlas
     return _ingest(parsers.parse_upload(data, filename), data, suffix, meta, source_id)
 
 

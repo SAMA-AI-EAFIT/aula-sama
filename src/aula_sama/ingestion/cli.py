@@ -18,7 +18,7 @@ from aula_sama.models import SourceMetadata
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="aula-sama-ingest")
-    p.add_argument("inputs", nargs="+", help="Archivos (pdf/md/txt/audio/video/zip/imágenes), URLs de YouTube o web")
+    p.add_argument("inputs", nargs="+", help="Archivos (pdf/docx/md/txt/audio/video/zip/imágenes), URLs de YouTube o web")
     p.add_argument("--title", default="")
     p.add_argument("--source-id", default=None)
     p.add_argument("--publisher", default="")

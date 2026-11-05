@@ -99,7 +99,7 @@ def show_result(label: str, run) -> None:
 def tab_upload() -> None:
     files = st.file_uploader(
         "PDF, Markdown, texto, imágenes, zip, audio o video",
-        type=["pdf", "md", "txt", "zip", *(s.lstrip(".") for s in IMAGE_SUFFIXES + AUDIO_VIDEO_SUFFIXES)],
+        type=["pdf", "docx", "md", "txt", "zip", *(s.lstrip(".") for s in IMAGE_SUFFIXES + AUDIO_VIDEO_SUFFIXES)],
         accept_multiple_files=True,
         help=(
             "Los PDF escaneados pasan por OCR. Las imágenes se convierten a texto con Claude (~USD 0,03 c/u). "
