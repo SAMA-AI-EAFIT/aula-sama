@@ -61,7 +61,7 @@ uv sync                      # crea .venv con Python 3.12 y las versiones fijada
 cp .env.example .env         # completar API keys (nunca commitear .env)
 docker compose up -d         # Qdrant + PostgreSQL locales
 uv run streamlit run src/aula_sama/admin/app.py   # pantalla de administración
-uv run streamlit run src/aula_sama/chat/app.py --server.port 8502   # chat (demo)
+uv run streamlit run src/aula_sama/chat/app.py --server.port 8502   # chat + Retos SAMA (demo)
 uv run pytest                # tests
 ```
 
@@ -70,6 +70,7 @@ Ingesta por línea de comandos (útil para cargas en lote):
 ```bash
 uv run aula-sama-ingest corpus/*.pdf --publisher DAGRAN --hazard inundacion
 uv run aula-sama-ingest "https://www.youtube.com/watch?v=..." --title "Charla SIATA"
+uv run aula-sama-ingest docs/documentos_tecnicos/*.docx --publisher DAGRAN
 ```
 
 ### Trabajo en varios equipos
@@ -82,13 +83,17 @@ El código se sincroniza con git; **los datos no**. Con `docker compose` cada eq
 
 ### Pipeline de ingesta
 
-`src/aula_sama/ingestion/`: registro de fuente → snapshot del original → parse (PDF con `pymupdf4llm` y OCR automático en páginas sin texto; YouTube con sus subtítulos o, si no tiene, audio vía `yt-dlp` transcrito con OpenAI `gpt-transcribe` en ventanas cortadas en silencios para conservar timestamps; archivos de audio/video igual; imágenes e infografías convertidas a Markdown con Claude (visión), en orden de lectura y con descripción de mapas/colores; un zip crea una fuente por carpeta; web con `trafilatura`) → chunking estructural (~650 tokens, respetando encabezados y conservando página o timestamps) → embeddings Voyage (`input_type="document"`) + BM25 sparse (`fastembed`) → upsert en Qdrant con IDs deterministas. Reingestar un original idéntico no hace nada; uno modificado crea una versión nueva y reemplaza sus chunks.
+`src/aula_sama/ingestion/`: registro de fuente → snapshot del original → parse (PDF con `pymupdf4llm` y OCR automático en páginas sin texto; Word con `python-docx` en orden de lectura —subtítulos, listas, tablas, cambios con control aceptados— y sus figuras descritas con Claude (visión) en su posición; YouTube con sus subtítulos o, si no tiene, audio vía `yt-dlp` transcrito con OpenAI `gpt-transcribe` en ventanas cortadas en silencios para conservar timestamps; archivos de audio/video igual; imágenes e infografías convertidas a Markdown con Claude (visión), en orden de lectura y con descripción de mapas/colores; un zip crea una fuente por carpeta; web con `trafilatura`) → chunking estructural (~650 tokens, respetando encabezados y conservando página o timestamps) → embeddings Voyage (`input_type="document"`) + BM25 sparse (`fastembed`) → upsert en Qdrant con IDs deterministas. Reingestar un original idéntico no hace nada; uno modificado crea una versión nueva y reemplaza sus chunks.
 
 ### Flujo de respuesta (chat)
 
 `src/aula_sama/graph/` (LangGraph): `classify_request` (Claude, salida estructurada: clase + consulta autocontenida que resuelve el contexto conversacional) → `retrieve_hybrid` (dense + BM25, RRF, 25 candidatos) → `rerank` (Voyage, top 6) → `assess_evidence` (gate determinista sobre el score del reranker; umbrales provisionales en `.env`) → `generate_answer` (Claude con bloques `search_result`: las citas las produce la API y se validan contra la evidencia entregada) → `attach_citations`. Saludos y preguntas aclaratoras (una sola, cuando sin ese dato no hay respuesta útil) las responde el clasificador. Emergencias, consultas de estado actual, temas fuera de alcance y evidencia insuficiente van a `escalate` con mensajes fijos. La persona (guardiana virtual de Aula SAMA), la voz y los límites siguen `docs/structure/Aula_SAMA_reporte_diseno_y_fuentes.pdf` y están en `src/aula_sama/prompts/`. La memoria conversacional es `InMemorySaver` (se pierde al reiniciar).
 
 En el chat, la guardiana tiene cara y voz (`src/aula_sama/chat/persona.py`): cuatro expresiones (neutral, explicando, pensando, seria) elegidas según la ruta de la respuesta, y un botón «Escuchar» con texto a voz de OpenAI (`TTS_MODEL`, `TTS_VOICE`; acepta el ID `voice_...` de una voz personalizada). Las ilustraciones de `src/aula_sama/chat/assets/avatar/` son provisionales: para reemplazarlas basta con dejar `neutral.png`, `explicando.png`, `pensando.png` y `seria.png` en esa carpeta.
+
+### Retos SAMA (trivias)
+
+La página «Retos SAMA» del chat (`src/aula_sama/chat/retos.py`) arma trivias por niveles (Explorador, Investigador, Experto) a partir de los Word de `docs/trivias/` (`TRIVIA_DIR`). Las preguntas, opciones, respuestas y aprendizajes salen tal cual de los documentos revisados: no pasan por el RAG ni por Claude, así que funciona sin API keys. Para agregar un reto basta con dejar otro `.docx` con la misma estructura (`Misión:`, `Nivel N:`, preguntas numeradas, `¡Respuesta! La B. …`, `💡 APRENDIZAJE SAMA - NIVEL N:`); el formato que se reconoce está documentado en `src/aula_sama/trivia.py`. Si un documento no se puede leer, la página lo indica en la barra lateral.
 
 ## Estado
 

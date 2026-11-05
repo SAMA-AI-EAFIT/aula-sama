@@ -19,6 +19,8 @@ class Settings(BaseSettings):
 
     storage_backend: Literal["local", "s3"] = "local"
     storage_local_dir: str = "data/storage"
+    # Documentos Word de los «Reto SAMA» que alimentan la página de trivias del chat
+    trivia_dir: str = "docs/trivias"
     s3_bucket: str = ""
     s3_endpoint_url: str | None = None
     s3_access_key_id: str | None = None

@@ -1,7 +1,4 @@
-"""Chat de Aula-SAMA (demo).
-
-    uv run streamlit run src/aula_sama/chat/app.py --server.port 8502
-"""
+"""Página de conversación con la guardiana virtual (se ejecuta desde `app.py`)."""
 
 import time
 import uuid
@@ -12,8 +9,6 @@ from aula_sama import prompts
 from aula_sama.chat import persona
 from aula_sama.config import get_settings
 from aula_sama.graph import build_graph
-
-st.set_page_config(page_title="Aula SAMA", page_icon="🌧️")
 
 EXAMPLES = [
     "¿Qué significa la alerta naranja?",
